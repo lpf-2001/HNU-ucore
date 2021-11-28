@@ -358,7 +358,7 @@ init_pmm_manager(void) {
 ```
 得到运行结果：
 
-<img src="img/扩展.jpg">
+<img src="img/扩展.png">
 
 运行结果中 buddy init 显示了内存分配情况，可分配的物理页面数一共有 32291 个，由于 buddy system 所能利用的内存大小必须为2的整数次幂，因此实际能分配的页面数为 16384 个，此外为了管理分配的页面，还需额外的 33 个页面分配给 buddy system 供其使用。
 
