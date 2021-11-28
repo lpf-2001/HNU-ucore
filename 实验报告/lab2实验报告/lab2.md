@@ -343,7 +343,7 @@ check_pgdir,check_boot_pgdir全部注释掉，最终可以得到成功的运行�
 
 最终实验结果：   
 <img src="img/result2.png">
-<img src="img/result.png">
+<img src="img/result1.png">
 
 ## 扩展练习：Challenge：buddy system（伙伴系统）分配算法（需要编程）
 核心代码存储在buddy_pmm.c和buddy_pmm.h中，更改pmm.c中的入口init_pmm_manager函数并添加头文件buddy.h
