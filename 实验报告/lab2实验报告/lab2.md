@@ -1,8 +1,8 @@
 ## 实验二
 ### 练习0：填写已有实验
 
-首先了解本次实验目的在于了解操作系统对于物理内存的管理，我们要做的是手动实现一个简单的物理内存管理系统。
-在lab1中我们了解到计算机上电开始会执行特定地址的一条jump指令，然后跳转到BIOS执行相应的代码，执行完成后转到物理内存执行它加载的第一个块，也就是bootloader，由bootloader相应的启动操作系统内核。但是在本次实验中BIOS的功能进一步细节化，操作系统如果需要知道整个计算机系统的内存是如何分布，就需要BIOS在最开始的时候通过在实模式下进行中断调用（这个中断调用有三个参数，但都是在实模式下进行的（本实验采用的参数是e820h）除了中断调用还有直接探测（直接探测在保护模式下进行））来进行系统物理内存的探测。探测方法是通过中断返回值di不断递增，找到一个一个内存布局（entry）然后存放在一个结构体中。后续操作系统对内存的操作就基于这个e820map的结构体。
+首先了解本次实验目的在于了解操作系统对于物理内存的管理，我们要做的是手动实现一个简单的物理内存管理系统。     
+在lab1中我们了解到计算机上电开始会执行特定地址的一条jump指令，然后跳转到BIOS执行相应的代码，执行完成后转到物理内存执行它加载的第一个块，也就是bootloader，由bootloader相应的启动操作系统内核。但是在本次实验中BIOS的功能进一步细节化，操作系统如果需要知道整个计算机系统的内存是如何分布，就需要BIOS在最开始的时候通过在实模式下进行中断调用（这个中断调用有三个参数，但都是在实模式下进行的（本实验采用的参数是e820h）除了中断调用还有直接探测（直接探测在保护模式下进行））来进行系统物理内存的探测。探测方法是通过中断返回值di不断递增，找到一个一个内存布局（entry）然后存放在一个结构体中。后续操作系统对内存的操作就基于这个e820map的结构体。   
 练习0要求把实验1的部分代码需要整合到本次实验中，经过比较需要更改的文件是kdebug.c和trap.c，其余地方不用更改。
 ### 练习1：实现 first-fit 连续物理内存分配算法（需要编程）
 为了方便管理所有连续的空闲内存空间块我们定义了一个数据结构：
@@ -13,6 +13,12 @@ typedef struct {
 } free_area_t;
 ```
 其中包括list_entry的双向链表指针（指向空闲的物理页）和记录当前空闲页个数的无符号整型变量nr_free。
+```c
+list.h
+struct list_entry {
+    struct list_entry *prev, *next;
+};
+```
 
 同时我们还需要一个管理物理页的数据结构Page
 ```c
@@ -110,8 +116,8 @@ default_alloc_pages(size_t n) {
         if (page->property > n) {
             struct Page *p = page + n;//获得分裂出来的新的空闲块的第一个页的描述信息
             p->property = page->property - n;//更新新的空闲块大小信息
-            SetPageProperty(p);
-            list_add(&free_list, &(p->page_link));//将新的空闲块插入空闲块列表中
+            SetPageProperty(p);//设置为空闲块头页，可以被分配不可被释放
+            list_add_after(&(page->page_link), &(p->page_link));//将新的空闲块插入空闲块列表中
     }
         list_del(&(page->page_link));//删除空闲链表中原先空闲块
         nr_free -= n;//更新总空闲物理页数量
@@ -133,17 +139,17 @@ default_free_pages(struct Page *base, size_t n) {
         set_page_ref(p, 0);//清空引用计数
     }
     base->property = n;//设置空闲块大小
-    SetPageProperty(base);//设置为表头
+    SetPageProperty(base);//设置为空闲块头页，可被分配
     list_entry_t *le = list_next(&free_list);
     while (le != &free_list) {
         p = le2page(le, page_link);
         le = list_next(le);//不断获取链表中下一块
         if (base + base->property == p) {//如果两个空闲块是相邻的
-            base->property += p->property;//进行空闲块合并
+            base->property += p->property;//进行空闲块合并（这个块在上一个空闲块的前面）
             ClearPageProperty(p);
             list_del(&(p->page_link));//将合并前的其中一个空闲块删除
         }
-        else if (p + p->property == base) {
+        else if (p + p->property == base) {//这个块在上一个块的后面可以合并
             p->property += base->property;
             ClearPageProperty(base);
             base = p;
@@ -216,17 +222,17 @@ KADDR：（takes a physical address and returns the corresponding kernel virtual
 
 |名称|地址|ucore对应|
 |:-----:|:-----:|:------:|
-|Page Table 4KB Aligned Address|	31 downto 12|	对应的页表地址|
-|Avail	|11 downto 9	|PTE_AVAIL|
-|Ignored|	8	|
-|Page Size	|7	|PTE_PS|
-|0|6	|PTE_MBZ|
-|Accessed	|5|	PTE_A|
-|Cache Disabled|4|PTE_PCD|
-|Write Through	|3	|PTE_PWT|
-|User/Supervisor|	2|	PTE_U|
-|Read/Write	|1	|PTE_W|
-|Present	|0	|PTE_P|
+|Page Table 4KB Aligned Address|    31 downto 12|   对应的页表地址|
+|Avail  |11 downto 9    |表示未被cpu使用可以保留给os使用|
+|Ignored|   8   |
+|Page Size  |7  |设置Page大小|
+|0|6    |PTE_MBZ|
+|Accessed   |5| 表示该页是否被使用过|
+|Cache Disabled|4|表示不对该页进行缓存|
+|Write Through  |3  |设置是否使用write through缓存写策略|
+|User/Supervisor|   2|  表示该页的访问需要的特权级|
+|Read/Write |1  |表示是否允许读写|
+|Present    |0  |表示该PDE的存在位|
 
 
 
@@ -234,17 +240,17 @@ KADDR：（takes a physical address and returns the corresponding kernel virtual
 
 |名称|地址|ucore对应|
 |:-----:|:-----:|:------:|
-|Physical Page Address|31 downto 12|	对应物理地址高20位|
-|Avail	|11 downto 9	|PTE_AVAIL|
-|Global|	8	|
-|0	|7	|PTE_MBZ|
-|Dirty|6	|PTE_D|
-|Accessed	|5|	PTE_A|
-|Cache Disabled|4|PTE_PCD|
-|Write Through	|3	|PTE_PWT|
-|User/Supervisor|	2|	PTE_U|
-|Read/Write	|1	|PTE_W|
-|Present	|0	|PTE_P|
+|Physical Page Address|31 downto 12|    对应物理地址高20位|
+|Avail  |11 downto 9    |留给os使用|
+|Global|    8   |
+|0  |7  ||
+|Dirty|6    |表示是否是脏页|
+|Accessed   |5| 表示是否被访问|
+|Cache Disabled|4|恒为0|
+|Write Through  |3  |恒为0|
+|User/Supervisor|   2|  访问特权级|
+|Read/Write |1  |表示是否允许读写|
+|Present    |0  |存在位|
 
 #### 如果ucore执行过程中访问内存，出现了页访问异常，请问硬件要做哪些事情？
 
@@ -259,7 +265,7 @@ KADDR：（takes a physical address and returns the corresponding kernel virtual
 ### 练习3：释放某虚地址所在的页并取消对应二级页表项的映射（需要编程）
 当释放一个包含某虚地址的物理内存页时，需要让对应此物理内存页的管理数据结构Page做相关的清除处理，使得此物理内存页成为空闲；另外还需把表示虚地址与物理地址对应关系的二级页表项清除。请仔细查看和理解page_remove_pte函数中的注释。为此，需要补全在 kern/mm/pmm.c中的page_remove_pte函数。     
 设计思路:    
-首先传入参数是一个一级页目录地址和二级页表项地址还有一个线性地址，然后if判断页是否存在，如果页存在通过pte2page获取物理地址。然后通过page_ref_dec函数查看当前页被引用次数，如果仅被二级页表引用一次，ref引用次数减一就是0，所以一级页表和二级页表都会被释放，如果不为0，说明被多个页表引用，当前页就不能被释放。但是二级页表一定要被释放。
+首先传入参数是一个一级页目录地址和二级页表项地址还有一个线性地址，然后if判断页是否存在，如果页存在通过pte2page获取物理地址。然后通过page_ref_dec函数查看当前页被引用次数，如果仅被引用一次，ref引用次数减一就是0，所以当前页和二级页表项都会被释放，如果不为0，说明被多个页表引用，当前页就不能被释放。但是二级页表项一定会被释放。
 ```c
 //pmm.h
 static inline int
@@ -286,7 +292,7 @@ if (*ptep & PTE_P) {
     if (page_ref_dec(page) == 0) {
         free_page(page);     //free a page
     }
-    *ptep = 0;//将二级页表置0表示取消映射
+    *ptep = 0;//将二级页表项置0表示取消映射
     tlb_invalidate(pgdir, la);//刷新tlb，保证tlb中的缓存不会有错误映射关系
 }
 ```
@@ -302,9 +308,97 @@ if (*ptep & PTE_P) {
 #define KERNTOP             (KERNBASE + KMEMSIZE)
 ```
 更改偏移量为0即可满足题目要求。
+```c
+SECTIONS {
+    /* Load the kernel at this address: "." means the current address */
+    . = 0xC0100000;        //把这个地方改为0x100000
+
+    .text : {
+        *(.text .stub .text.* .gnu.linkonce.t.*)
+    }
+
+```
+修改tools/kernel.ld文件中的一个地方
+```c
+SECTIONS {
+    /* Load the kernel at this address: "." means the current address */
+    . = 0x00100000;
+```
+还有entry.S中的
+```c
+    xorl %eax, %eax
+    movl %eax, __boot_pgdir
+```
+```c
+   #.long REALLOC(__boot_pt1) + (PTE_P | PTE_U | PTE_W)
+   #.space (KERNBASE >> PGSHIFT >> 10 << 2) - (. - __boot_pgdir) # pad to PDE of KERNBASE
+```
+都注释掉。
+然后将映射关系
+check_pgdir,check_boot_pgdir全部注释掉，最终可以得到成功的运行结果：
+
+<img src="img/映射.png">
+
+会发现PDE的映射都是恒等关系。
 
 最终实验结果：   
 <img src="img/result2.png">
-<img src="img/result.jpg">
+<img src="img/result.png">
 
 ## 扩展练习：Challenge：buddy system（伙伴系统）分配算法（需要编程）
+核心代码存储在buddy_pmm.c和buddy_pmm.h中，更改pmm.c中的入口init_pmm_manager函数并添加头文件buddy.h
+```c
+static void
+init_pmm_manager(void) {
+    //pmm_manager = &default_pmm_manager;
+    pmm_manager = &buddy_pmm_manager;
+    cprintf("memory management: %s\n", pmm_manager->name);
+    pmm_manager->init();
+}
+```
+得到运行结果：
+
+<img src="img/扩展.jpg">
+
+运行结果中 buddy init 显示了内存分配情况，可分配的物理页面数一共有 32291 个，由于 buddy system 所能利用的内存大小必须为2的整数次幂，因此实际能分配的页面数为 16384 个，此外为了管理分配的页面，还需额外的 33 个页面分配给 buddy system 供其使用。
+
+伙伴系统的基本思想是通过一个数组形式的完全二叉树来监控管理内存，二叉树的节点用于标记相应内存块的使用状态，高层节点对应大的块，低层节点对应小的块，在分配和释放中我们就通过这些节点的标记属性来进行块的分离合并。分配就是找到一个对应节点内存大小满足需求，然后分配出来，转换成内存块索引返回。同时更新此结点的所有上层结点（用上层节点左右子节点较大值更新）释放就是将释放的内存加入二叉树原来位置中，自底向上回溯，检查是否有可以合并的块，如果有（左右子树节点值加起来等于原中间结点值）表示能够合并。
+
+伙伴系统的具体实现：
+```c
+static struct Page* buddy_alloc_pages(size_t n) {
+    assert(n > 0);
+    if (n > buddy_page[1]) return NULL;
+    unsigned int index = 1, size = max_pages;
+    for (; size >= n; size >>= 1) {
+        if (buddy_page[index << 1] >= n) index <<= 1;
+        else if (buddy_page[index << 1 | 1] >= n) index = index << 1 | 1;
+        else break;
+    }
+    buddy_page[index] = 0;
+    // allocate all pages under node[index]
+    struct Page* new_page = buddy_allocatable_base + index * size - max_pages;
+    for (struct Page* p = new_page; p != new_page + size; ++p)
+        set_page_ref(p, 0), ClearPageProperty(p);
+    for (; (index >>= 1) > 0; ) // since destory continuous, use MAX instead of SUM
+        buddy_page[index] = max(buddy_page[index << 1], buddy_page[index << 1 | 1]);
+    return new_page;
+}
+```
+```c
+static void buddy_free_pages(struct Page *base, size_t n) {
+    assert(n > 0);
+    unsigned int index = (unsigned int)(base - buddy_allocatable_base) + max_pages, size = 1;
+    // find first buddy node which has buddy_page[index] == 0
+    for (; buddy_page[index] > 0; index >>= 1, size <<= 1);
+    // free all pages
+    for (struct Page *p = base; p != base + n; ++p) {
+        assert(!PageReserved(p) && !PageProperty(p));
+        SetPageProperty(p), set_page_ref(p, 0);
+    }
+    // modify buddy_page
+    for (buddy_page[index] = size; size <<= 1, (index >>= 1) > 0;)
+        buddy_page[index] = (buddy_page[index << 1] + buddy_page[index << 1 | 1] == size) ? size : max(buddy_page[index << 1], buddy_page[index << 1 | 1]);
+}
+```
+
