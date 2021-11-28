@@ -252,6 +252,8 @@ KADDR：（takes a physical address and returns the corresponding kernel virtual
 |Read/Write |1  |表示是否允许读写|
 |Present    |0  |存在位|
 
+通过对页中的项目有特权位的访问，可以很好的保护每一项，并且有一些位中存在缓存访问位以及该位是否被使用，可以留在以后用在lru算法中。
+
 #### 如果ucore执行过程中访问内存，出现了页访问异常，请问硬件要做哪些事情？
 
  当ucore执行过程中出现了页访问异常，硬件需要完成的事情分别如下：
